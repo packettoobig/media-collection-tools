@@ -1,0 +1,57 @@
+# ── Script logs ────────────────────────────────────────────────────────────────
+check_videofiles_*.log
+
+# ── VS Code ────────────────────────────────────────────────────────────────────
+.vscode/*
+*.code-workspace
+.history/
+
+# ── JetBrains (IntelliJ, PyCharm, WebStorm, etc.) ─────────────────────────────
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# ── Vim / Neovim ───────────────────────────────────────────────────────────────
+[._]*.s[a-v][a-z]
+[._]*.sw[a-p]
+[._]s[a-rt-v][a-z]
+[._]ss[a-gi-z]
+[._]sw[a-p]
+Session.vim
+Sessionx.vim
+.netrwhist
+[._]*.un~
+
+# ── Emacs ──────────────────────────────────────────────────────────────────────
+*~
+\#*\#
+.\#*
+/.emacs.desktop
+/.emacs.desktop.lock
+auto-save-list
+
+# ── Sublime Text ───────────────────────────────────────────────────────────────
+*.tmlanguage.cache
+*.tmPreferences.cache
+*.stTheme.cache
+*.sublime-workspace
+
+# ── Linux temp files ───────────────────────────────────────────────────────────
+.fuse_hidden*
+.Trash-*
+.nfs*
+
+# ── macOS ──────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# ── Windows ────────────────────────────────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
