@@ -121,6 +121,9 @@ find "$PARENTFOLDER" -type f -regextype posix-extended -regex ".*\.(${EXTENSIONS
     else \
       printf "%s [%s] [%s +%ds %03dms] %s\n" "$status" "$decode_mode" "$started_at" $((elapsed/1000)) $((elapsed%1000)) "$1"; \
     fi; \
+    if [ "$codes" = "UNKNOWN" ]; then \
+      printf "%s\n" "$real_err" | sed "s/^/  ↳ /" ; \
+    fi; \
     if [ "$status" = "ERROR" ]; then \
       case "$ACTION" in \
         remux) \
