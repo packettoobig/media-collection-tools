@@ -26,7 +26,7 @@ export QUARANTINE_FOLDER="${QUARANTINE_FOLDER:-$SCRIPT_DIR/quarantine_$DATESTAMP
 # These are always determined by the script — never taken from the config file
 EXTENSIONS="${EXTENSIONS:-avi|mkv|mp4|ts|m4v}"
 PARENTFOLDER="$1"
-LOGFILE="$SCRIPT_DIR/check_videofiles_logs/${DATESTAMP}.log"
+LOGFILE="$SCRIPT_DIR/logs_check_videofiles/${DATESTAMP}.log"
 
 find "$PARENTFOLDER" -type f -regextype posix-extended -regex ".*\.(${EXTENSIONS})" -print0 \
   | xargs -0 -P $PARALLEL -I{} bash -c \
