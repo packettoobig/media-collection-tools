@@ -31,11 +31,19 @@ LOGFILE="$SCRIPT_DIR/logs_check_videofiles/${DATESTAMP}.log"
 find "$PARENTFOLDER" -type f -regextype posix-extended -regex ".*\.(${EXTENSIONS})" -print0 \
   | xargs -0 -P $PARALLEL -I{} bash -c \
     'start=$(date +%s%3N); \
-     started_at=$(date +%H:%M:%S); \
-     err=$( \
-       ffmpeg -v error -hwaccel $HWACC_TYPE -hwaccel_device $HWACC_DEV -hwaccel_output_format $HWACC_TYPE -threads 1 -t $CHECKSECONDS -i "$1" -map 0:a -f null - 2>&1; \
-       ffmpeg -v error -hwaccel $HWACC_TYPE -hwaccel_device $HWACC_DEV -hwaccel_output_format $HWACC_TYPE -threads 1 -sseof -$CHECKSECONDS -i "$1" -map 0:a -f null - 2>&1 \
-     ); \
+    started_at=$(date +%H:%M:%S); \
+    # HW decode, if error try again with software decoding.
+    err=$( \
+      ffmpeg -v error -hwaccel $HWACC_TYPE -hwaccel_device $HWACC_DEV -hwaccel_output_format $HWACC_TYPE -threads 1 -t $CHECKSECONDS -i "$1" -map 0:a -f null - 2>&1; \
+      ffmpeg -v error -hwaccel $HWACC_TYPE -hwaccel_device $HWACC_DEV -hwaccel_output_format $HWACC_TYPE -threads 1 -sseof -$CHECKSECONDS -i "$1" -map 0:a -f null - 2>&1 \
+    ); \
+    if [ -n "$err" ]; then \
+      sw_err=$( \
+        ffmpeg -v error -threads 1 -t $CHECKSECONDS -i "$1" -map 0 -f null - 2>&1; \
+        ffmpeg -v error -threads 1 -sseof -$CHECKSECONDS -i "$1" -map 0 -f null - 2>&1 \
+      ); \
+      err="$sw_err"; \
+    fi; \
      elapsed=$(( $(date +%s%3N) - start )); \
      if [ -n "$err" ]; then \
        printf "ERROR [%s +%ds %03dms] %s\n" "$started_at" $((elapsed/1000)) $((elapsed%1000)) "$1"; \
