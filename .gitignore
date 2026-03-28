@@ -1,6 +1,9 @@
 # ── Script logs ────────────────────────────────────────────────────────────────
 *.log
 
+# Config files (may contain local paths)
+*.conf
+
 # ── VS Code ────────────────────────────────────────────────────────────────────
 .vscode/*
 *.code-workspace

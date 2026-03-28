@@ -1,26 +1,32 @@
 #!/bin/bash
 
-# Check (using intel HW acceleration) that the first and last X seconds of every media file is OK (ffmpeg can read them)
+# Check (using intel HW acceleration) that the first and last w seconds of every media file is OK (ffmpeg can read them)
 # It took too long to check the entire file.
 
+SCRIPT_DIR="$(dirname "$0")"
+DATESTAMP="$(date +%Y%m%d_%H%M%S)"
+
+# Load config file if it exists (overrides defaults below)
+[[ -f "$SCRIPT_DIR/check_videofiles.conf" ]] && source "$SCRIPT_DIR/check_videofiles.conf"
+
 # These need to be exported to the xargs subshell
-export HWACC_DEV='/dev/dri/renderD128' #Intel
-export HWACC_TYPE='vaapi' #Intel
-export PARALLEL=2
-export CHECKSECONDS=60
+export HWACC_DEV="${HWACC_DEV:-/dev/dri/renderD128}" #Intel
+export HWACC_TYPE="${HWACC_TYPE:-vaapi}" #Intel
+export PARALLEL="${PARALLEL:-2}"
+export CHECKSECONDS="${CHECKSECONDS:-60}"
 
 # ACTION on error:
 #   none    — just log it (default)
 #   remux   — attempt to fix by remuxing into a new file (safe, non-destructive)
 #   delete  — permanently delete the file (destructive!)
 #   move    — move to QUARANTINE_FOLDER
-export ACTION='none'
-export QUARANTINE_FOLDER='/nasraid/DATA/_corrupted'
+export ACTION="${ACTION:-none}"
+export QUARANTINE_FOLDER="${QUARANTINE_FOLDER:-$SCRIPT_DIR/quarantine_$DATESTAMP}"
 
-# These don't need export
-PARENTFOLDER=$1
-EXTENSIONS="avi|mkv|mp4|ts|m4v"
-LOGFILE="$(dirname "$0")/check_videofiles_$(date +%Y%m%d_%H%M%S).log"
+# These are always determined by the script — never taken from the config file
+EXTENSIONS="${EXTENSIONS:-avi|mkv|mp4|ts|m4v}"
+PARENTFOLDER="$1"
+LOGFILE="$SCRIPT_DIR/check_videofiles_${DATESTAMP}.log"
 
 find "$PARENTFOLDER" -type f -regextype posix-extended -regex ".*\.(${EXTENSIONS})" -print0 \
   | xargs -0 -P $PARALLEL -I{} bash -c \
