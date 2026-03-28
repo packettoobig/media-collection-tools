@@ -1,7 +1,8 @@
 # ── Script logs ────────────────────────────────────────────────────────────────
 *.log
+!.gitkeep
 
-# Config files (may contain local paths)
+# ── Config files (may contain local paths) ────────────────────────────────────
 *.conf
 
 # ── VS Code ────────────────────────────────────────────────────────────────────
