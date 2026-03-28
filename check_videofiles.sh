@@ -76,11 +76,14 @@ find "$PARENTFOLDER" -type f -regextype posix-extended -regex ".*\.(${EXTENSIONS
       ffmpeg -v error -hwaccel $HWACC_TYPE -hwaccel_device $HWACC_DEV -hwaccel_output_format $HWACC_TYPE -threads 1 -sseof -$CHECKSECONDS -i "$1" -map 0:a -f null - 2>&1 \
     ); \
     if [ -n "$err" ]; then \
+      decode_mode="SW"; \
       sw_err=$( \
         ffmpeg -v error -threads 1 -t $CHECKSECONDS -i "$1" -map 0 -f null - 2>&1; \
         ffmpeg -v error -threads 1 -sseof -$CHECKSECONDS -i "$1" -map 0 -f null - 2>&1 \
       ); \
       err="$sw_err"; \
+    else \
+      decode_mode="HW"; \
     fi; \
     elapsed=$(( $(date +%s%3N) - start )); \
     harmless_grep=$(printf "%s\n" "$HARMLESS_SERIAL" | cut -d"|" -f1 | paste -sd"|"); \
@@ -114,9 +117,9 @@ find "$PARENTFOLDER" -type f -regextype posix-extended -regex ".*\.(${EXTENSIONS
       codes=""; \
     fi; \
     if [ -n "$codes" ]; then \
-      printf "%s [%s +%ds %03dms] [%s] %s\n" "$status" "$started_at" $((elapsed/1000)) $((elapsed%1000)) "$codes" "$1"; \
+      printf "%s [%s] [%s +%ds %03dms] [%s] %s\n" "$status" "$decode_mode" "$started_at" $((elapsed/1000)) $((elapsed%1000)) "$codes" "$1"; \
     else \
-      printf "%s [%s +%ds %03dms] %s\n" "$status" "$started_at" $((elapsed/1000)) $((elapsed%1000)) "$1"; \
+      printf "%s [%s] [%s +%ds %03dms] %s\n" "$status" "$decode_mode" "$started_at" $((elapsed/1000)) $((elapsed%1000)) "$1"; \
     fi; \
     if [ "$status" = "ERROR" ]; then \
       case "$ACTION" in \
