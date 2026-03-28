@@ -12,7 +12,7 @@ export CHECKSECONDS=60
 # These don't
 PARENTFOLDER=$1
 EXTENSIONS="avi|mkv|mp4|ts|m4v"
-
+LOGFILE="$(dirname "$0")/check_videofiles_$(date +%Y%m%d_%H%M%S).log"
 
 find "$PARENTFOLDER" -type f -regextype posix-extended -regex ".*\.(${EXTENSIONS})" -print0 \
   | xargs -0 -P $PARALLEL -I{} bash -c \
@@ -27,6 +27,7 @@ find "$PARENTFOLDER" -type f -regextype posix-extended -regex ".*\.(${EXTENSIONS
        printf "ERROR [%s +%ds %03dms] %s\n" "$started_at" $((elapsed/1000)) $((elapsed%1000)) "$1"; \
      else \
        printf "OK    [%s +%ds %03dms] %s\n" "$started_at" $((elapsed/1000)) $((elapsed%1000)) "$1"; \
-     fi' _ {}
+     fi' _ {} \
+  | tee -a "$LOGFILE"
 
-
+echo "Log saved to: $LOGFILE"
