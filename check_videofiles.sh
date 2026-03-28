@@ -48,7 +48,7 @@ ERROR_CODES_SERIAL=$(printf '%s\n' "${KNOWN_ERROR_CODES[@]}")
 
 export HWACC_DEV="${HWACC_DEV:-/dev/dri/renderD128}"
 export HWACC_TYPE="${HWACC_TYPE:-vaapi}"
-export PARALLEL="${PARALLEL:-2}"
+export PARALLEL="${PARALLEL:-4}"
 export CHECKSECONDS="${CHECKSECONDS:-60}"
 export HARMLESS_SERIAL
 export ERROR_CODES_SERIAL
