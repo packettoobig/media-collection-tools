@@ -72,14 +72,14 @@ find "$PARENTFOLDER" -type f -regextype posix-extended -regex ".*\.(${EXTENSIONS
     'start=$(date +%s%3N); \
     started_at=$(date +%H:%M:%S); \
     err=$( \
-      ffmpeg -v error -hwaccel $HWACC_TYPE -hwaccel_device $HWACC_DEV -hwaccel_output_format $HWACC_TYPE -threads 1 -t $CHECKSECONDS -i "$1" -map 0:a -f null - 2>&1; \
-      ffmpeg -v error -hwaccel $HWACC_TYPE -hwaccel_device $HWACC_DEV -hwaccel_output_format $HWACC_TYPE -threads 1 -sseof -$CHECKSECONDS -i "$1" -map 0:a -f null - 2>&1 \
+      ffmpeg -v error -hwaccel $HWACC_TYPE -hwaccel_device $HWACC_DEV -hwaccel_output_format $HWACC_TYPE -threads 1 -t $CHECKSECONDS -i "$1" -map 0:v -map 0:a -f null - 2>&1; \
+      ffmpeg -v error -hwaccel $HWACC_TYPE -hwaccel_device $HWACC_DEV -hwaccel_output_format $HWACC_TYPE -threads 1 -sseof -$CHECKSECONDS -i "$1" -map 0:v -map 0:a -f null - 2>&1 \
     ); \
     if [ -n "$err" ]; then \
       decode_mode="SW"; \
       sw_err=$( \
-        ffmpeg -v error -threads 1 -t $CHECKSECONDS -i "$1" -map 0 -f null - 2>&1; \
-        ffmpeg -v error -threads 1 -sseof -$CHECKSECONDS -i "$1" -map 0 -f null - 2>&1 \
+        ffmpeg -v error -threads 1 -t $CHECKSECONDS -i "$1" -map 0:v -map 0:a -f null - 2>&1; \
+        ffmpeg -v error -threads 1 -sseof -$CHECKSECONDS -i "$1" -map 0:v -map 0:a -f null - 2>&1 \
       ); \
       err="$sw_err"; \
     else \
