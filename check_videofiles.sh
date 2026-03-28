@@ -7,35 +7,51 @@ SCRIPT_DIR="$(dirname "$0")"
 DATESTAMP="$(date +%Y%m%d_%H%M%S)"
 
 # ── Defaults (all overridable in the config file) ─────────────────────────────
+# Format: 'grep_pattern|SHORT_CODE'
 
 KNOWN_HARMLESS_ERRORS=(
-    'Header missing'
-    'low_delay flag set incorrectly'
-    'non monotonous'
-    'DTS .*, resampling'
-    'PTS .*, resampling'
-    'last message repeated'
-    'ac3.*header'
-    'invalid data found when processing input'
-    'max_analyze_duration'
-    'Application provided invalid'
-    'co located POCs unavailable'
-    'stream.*no video nor audio'
+    'Header missing|MP3_HDR'
+    'low_delay flag set incorrectly|LOW_DELAY'
+    'non monotonous|MONOTON'
+    'DTS .*, resampling|DTS_RESAMP'
+    'PTS .*, resampling|PTS_RESAMP'
+    'last message repeated|REPEATED'
+    'ac3.*header|AC3_HDR'
+    'invalid data found when processing input|INV_DATA'
+    'max_analyze_duration|MAX_ANALYZE'
+    'Application provided invalid|APP_INVALID'
+    'co located POCs unavailable|COPOC'
+    'stream.*no video nor audio|NO_STREAMS'
 )
 
-# Load config file — can override any variable or append to KNOWN_HARMLESS_ERRORS
+KNOWN_ERROR_CODES=(
+    'moov atom not found|NO_MOOV'
+    'missing mandatory atom|NO_MOOV'
+    'Error while decoding|DECODE_ERR'
+    'Could not find codec|NO_CODEC'
+    'Decoder.*not found|NO_CODEC'
+    'end of file|TRUNCATED'
+    'truncat|TRUNCATED'
+    'corrupt|CORRUPT'
+    'Invalid data found|CORRUPT'
+    'no such file|NOT_FOUND'
+    'Permission denied|PERM'
+)
+
+# Load config file — can override any variable or append to either array
 [[ -f "$SCRIPT_DIR/check_videofiles.conf" ]] && source "$SCRIPT_DIR/check_videofiles.conf"
 
-# Serialize the array into a grep-compatible alternation pattern.
-# Must be done AFTER config is sourced so user additions are included.
-# bash arrays cannot be exported directly, so we export the compiled string.
-HARMLESS_PATTERN=$(printf '%s\n' "${KNOWN_HARMLESS_ERRORS[@]}" | paste -sd '|')
+# Serialize arrays into newline-separated strings for export to subshells
+# (bash arrays cannot be exported directly)
+HARMLESS_SERIAL=$(printf '%s\n' "${KNOWN_HARMLESS_ERRORS[@]}")
+ERROR_CODES_SERIAL=$(printf '%s\n' "${KNOWN_ERROR_CODES[@]}")
 
 export HWACC_DEV="${HWACC_DEV:-/dev/dri/renderD128}"
 export HWACC_TYPE="${HWACC_TYPE:-vaapi}"
 export PARALLEL="${PARALLEL:-2}"
 export CHECKSECONDS="${CHECKSECONDS:-60}"
-export HARMLESS_PATTERN
+export HARMLESS_SERIAL
+export ERROR_CODES_SERIAL
 
 # ACTION on error:
 #   none    — just log it (default)
@@ -49,6 +65,7 @@ export QUARANTINE_FOLDER="${QUARANTINE_FOLDER:-$SCRIPT_DIR/quarantine_$DATESTAMP
 EXTENSIONS="${EXTENSIONS:-avi|mkv|mp4|ts|m4v}"
 PARENTFOLDER="$1"
 LOGFILE="$SCRIPT_DIR/logs_check_videofiles/${DATESTAMP}.log"
+mkdir -p "$(dirname "$LOGFILE")"
 
 find "$PARENTFOLDER" -type f -regextype posix-extended -regex ".*\.(${EXTENSIONS})" -print0 \
   | xargs -0 -P $PARALLEL -I{} bash -c \
@@ -66,19 +83,41 @@ find "$PARENTFOLDER" -type f -regextype posix-extended -regex ".*\.(${EXTENSIONS
       err="$sw_err"; \
     fi; \
     elapsed=$(( $(date +%s%3N) - start )); \
-    if [ -n "$HARMLESS_PATTERN" ]; then \
-      real_err=$(printf "%s\n" "$err" | grep -ivE "$HARMLESS_PATTERN"); \
+    harmless_grep=$(printf "%s\n" "$HARMLESS_SERIAL" | cut -d"|" -f1 | paste -sd"|"); \
+    if [ -n "$harmless_grep" ]; then \
+      real_err=$(printf "%s\n" "$err" | grep -ivE "$harmless_grep"); \
     else \
       real_err="$err"; \
     fi; \
     if [ -n "$real_err" ]; then \
       status="ERROR"; \
+      codes=""; \
+      while IFS="|" read -r pat code; do \
+        [ -z "$pat" ] && continue; \
+        if printf "%s\n" "$real_err" | grep -qiE "$pat"; then \
+          printf "%s\n" "$codes" | grep -qF "$code" || codes="${codes:+$codes,}$code"; \
+        fi; \
+      done <<< "$ERROR_CODES_SERIAL"; \
+      [ -z "$codes" ] && codes="UNKNOWN"; \
     elif [ -n "$err" ]; then \
       status="WARN "; \
+      codes=""; \
+      while IFS="|" read -r pat code; do \
+        [ -z "$pat" ] && continue; \
+        if printf "%s\n" "$err" | grep -qiE "$pat"; then \
+          printf "%s\n" "$codes" | grep -qF "$code" || codes="${codes:+$codes,}$code"; \
+        fi; \
+      done <<< "$HARMLESS_SERIAL"; \
+      [ -z "$codes" ] && codes="HARMLESS"; \
     else \
       status="OK   "; \
+      codes=""; \
     fi; \
-    printf "%s [%s +%ds %03dms] %s\n" "$status" "$started_at" $((elapsed/1000)) $((elapsed%1000)) "$1"; \
+    if [ -n "$codes" ]; then \
+      printf "%s [%s +%ds %03dms] [%s] %s\n" "$status" "$started_at" $((elapsed/1000)) $((elapsed%1000)) "$codes" "$1"; \
+    else \
+      printf "%s [%s +%ds %03dms] %s\n" "$status" "$started_at" $((elapsed/1000)) $((elapsed%1000)) "$1"; \
+    fi; \
     if [ "$status" = "ERROR" ]; then \
       case "$ACTION" in \
         remux) \
@@ -106,7 +145,7 @@ find "$PARENTFOLDER" -type f -regextype posix-extended -regex ".*\.(${EXTENSIONS
             || printf "  ↳ MOVE FAILED : %s\n" "$1" \
           ;; \
         *) ;; \
-      esac \
+      esac; \
     fi' _ {} \
   | tee -a "$LOGFILE"
 

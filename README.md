@@ -1,5 +1,9 @@
 # Media-collection-tools
 
+This is a collection of media tools.  
+`check_videofiles.sh` is a basic bash script attempting to detecte and/or fix unplayable video files.  
+It should not be considered "good code" or "stable" in any way, simply a personal script I decided to make available for others to use.  
+
 ## Config file
 To not use the script defaults, here is an example `check_videofiles.conf`: 
 
