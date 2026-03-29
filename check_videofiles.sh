@@ -4,6 +4,7 @@
 #   Stage 1 — ffprobe container probe      (fast, no decode)
 #   Stage 2 — ffmpeg remux-to-null         (fast, no decode — structural integrity)
 #   Stage 3 — ffmpeg HW-decode start+end   (parallel, keyframes only by default)
+#             └─ SW fallback if HW rejects the codec
 #
 # Terminal output : one summary line per file  (OK / ERROR)
 # Log file        : summary + full ffmpeg stderr per stage
@@ -53,7 +54,7 @@ find "$PARENTFOLDER" -type f -regextype posix-extended -regex ".*\.(${EXTENSIONS
     has_error=0
 
     # ── Stage 1: container probe (no decode) ──────────────────────────────────
-    out=$(ffprobe -v error -show_format -show_streams -i "$f" 2>&1 >/dev/null)
+    out=$(ffprobe -v error -show_format -show_streams -nostdin -i "$f" 2>&1 >/dev/null)
     if [ -n "$out" ]; then
       has_error=1
       { printf "[PROBE]\n"; printf "%s\n" "$out"; } | sed "s/^/  | /" >> "$tmplog"
@@ -69,39 +70,62 @@ find "$PARENTFOLDER" -type f -regextype posix-extended -regex ".*\.(${EXTENSIONS
     fi
 
     # ── Stage 3: decode start + end in parallel ───────────────────────────────
+    # Uses a bash array for the optional -skip_frame flag — safe for any filename.
+    # On HW decode error, automatically retries with SW decode.
+    # Only reports ERROR if SW decode also fails (HW errors alone = unsupported codec, not corruption).
     if [ $has_error -eq 0 ]; then
 
-      # Build skip-nonref flag
-      [ "$SKIP_NONREF" = "true" ] && skip_flag="-skip_frame noref" || skip_flag=""
+      skip_args=()
+      [ "$SKIP_NONREF" = "true" ] && skip_args=(-skip_frame noref)
 
-      hw_flags="-hwaccel $HWACC_TYPE -hwaccel_device $HWACC_DEV -hwaccel_output_format $HWACC_TYPE"
+      run_decode() {
+        local mode="$1"   # "hw" or "sw"
+        local tmp_s tmp_e out_s out_e
+        tmp_s=$(mktemp)
+        tmp_e=$(mktemp)
 
-      # Run start and end decode simultaneously, capture output to temp files
-      tmp_start=$(mktemp)
-      tmp_end=$(mktemp)
+        if [ "$mode" = "hw" ]; then
+          ffmpeg -v error "${skip_args[@]}" \
+            -hwaccel "$HWACC_TYPE" -hwaccel_device "$HWACC_DEV" -hwaccel_output_format "$HWACC_TYPE" \
+            -nostdin -threads 1 -t "$CHECKSECONDS" -i "$f" \
+            -map 0:v? -map 0:a? -f null - > "$tmp_s" 2>&1 &
+          local pid_s=$!
+          ffmpeg -v error "${skip_args[@]}" \
+            -hwaccel "$HWACC_TYPE" -hwaccel_device "$HWACC_DEV" -hwaccel_output_format "$HWACC_TYPE" \
+            -nostdin -threads 1 -sseof "-$CHECKSECONDS" -i "$f" \
+            -map 0:v? -map 0:a? -f null - > "$tmp_e" 2>&1 &
+          local pid_e=$!
+        else
+          ffmpeg -v error "${skip_args[@]}" \
+            -nostdin -threads 1 -t "$CHECKSECONDS" -i "$f" \
+            -map 0:v? -map 0:a? -f null - > "$tmp_s" 2>&1 &
+          local pid_s=$!
+          ffmpeg -v error "${skip_args[@]}" \
+            -nostdin -threads 1 -sseof "-$CHECKSECONDS" -i "$f" \
+            -map 0:v? -map 0:a? -f null - > "$tmp_e" 2>&1 &
+          local pid_e=$!
+        fi
 
-      eval ffmpeg -v error $skip_flag $hw_flags \
-        -nostdin -threads 1 -t "$CHECKSECONDS" -i \""$f"\" \
-        -map 0:v? -map 0:a? -f null - \
-        > "$tmp_start" 2>&1 &
-      pid_start=$!
+        wait $pid_s $pid_e
+        out_s=$(cat "$tmp_s")
+        out_e=$(cat "$tmp_e")
+        rm -f "$tmp_s" "$tmp_e"
+        printf "%s%s" "$out_s" "$out_e"
+      }
 
-      eval ffmpeg -v error $skip_flag $hw_flags \
-        -nostdin -threads 1 -sseof "-$CHECKSECONDS" -i \""$f"\" \
-        -map 0:v? -map 0:a? -f null - \
-        > "$tmp_end" 2>&1 &
-      pid_end=$!
+      hw_out=$(run_decode hw)
 
-      wait $pid_start $pid_end
-
-      out_start=$(cat "$tmp_start")
-      out_end=$(cat "$tmp_end")
-      rm -f "$tmp_start" "$tmp_end"
-
-      out="${out_start}${out_end}"
-      if [ -n "$out" ]; then
-        has_error=1
-        { printf "[DECODE]\n"; printf "%s\n" "$out"; } | sed "s/^/  | /" >> "$tmplog"
+      if [ -n "$hw_out" ]; then
+        # HW decode had output — check if SW decode agrees
+        sw_out=$(run_decode sw)
+        if [ -n "$sw_out" ]; then
+          # Both HW and SW report errors — genuine file corruption
+          has_error=1
+          { printf "[DECODE-SW]\n"; printf "%s\n" "$sw_out"; } | sed "s/^/  | /" >> "$tmplog"
+        else
+          # SW is clean — HW failure was codec support, not corruption; log as info only
+          { printf "[DECODE-HW-UNSUPPORTED — SW OK]\n"; printf "%s\n" "$hw_out"; } | sed "s/^/  | /" >> "$tmplog"
+        fi
       fi
     fi
 
