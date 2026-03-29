@@ -1,158 +1,114 @@
 #!/bin/bash
 
-# Check (using intel HW acceleration) that the first and last N seconds of every
-# media file is OK (ffmpeg can read them without real errors).
+# Checks the first and last N seconds of every media file using:
+#   Stage 1 — ffprobe container probe     (fast, no decode)
+#   Stage 2 — ffmpeg remux-to-null        (fast, no decode — structural integrity)
+#   Stage 3 — ffmpeg HW-decode start+end  (decode check)
+#
+# Terminal output : one summary line per file  (OK / ERROR)
+# Log file        : summary + full ffmpeg stderr, labelled by stage
 
 SCRIPT_DIR="$(dirname "$0")"
 DATESTAMP="$(date +%Y%m%d_%H%M%S)"
 
-# ── Defaults (all overridable in the config file) ─────────────────────────────
-# Format: 'grep_pattern|SHORT_CODE'
+# ── Defaults (overridable in check_videofiles.conf) ───────────────────────────
+HWACC_DEV="${HWACC_DEV:-/dev/dri/renderD128}"
+HWACC_TYPE="${HWACC_TYPE:-vaapi}"
+PARALLEL="${PARALLEL:-4}"
+CHECKSECONDS="${CHECKSECONDS:-60}"
+ACTION="${ACTION:-none}"
+QUARANTINE_FOLDER="${QUARANTINE_FOLDER:-$SCRIPT_DIR/quarantine_$DATESTAMP}"
 
-KNOWN_HARMLESS_ERRORS=(
-    'Header missing|MP3_HDR'
-    'low_delay flag set incorrectly|LOW_DELAY'
-    'non monotonous|MONOTON'
-    'DTS .*, resampling|DTS_RESAMP'
-    'PTS .*, resampling|PTS_RESAMP'
-    'last message repeated|REPEATED'
-    'ac3.*header|AC3_HDR'
-    'invalid data found when processing input|INV_DATA'
-    'max_analyze_duration|MAX_ANALYZE'
-    'Application provided invalid|APP_INVALID'
-    'co located POCs unavailable|COPOC'
-    'stream.*no video nor audio|NO_STREAMS'
-)
-
-KNOWN_ERROR_CODES=(
-    'moov atom not found|NO_MOOV'
-    'missing mandatory atom|NO_MOOV'
-    'Error while decoding|DECODE_ERR'
-    'Could not find codec|NO_CODEC'
-    'Decoder.*not found|NO_CODEC'
-    'end of file|TRUNCATED'
-    'truncat|TRUNCATED'
-    'corrupt|CORRUPT'
-    'Invalid data found|CORRUPT'
-    'no such file|NOT_FOUND'
-    'Permission denied|PERM'
-)
-
-# Load config file — can override any variable or append to either array
 [[ -f "$SCRIPT_DIR/check_videofiles.conf" ]] && source "$SCRIPT_DIR/check_videofiles.conf"
 
-# Serialize arrays into newline-separated strings for export to subshells
-# (bash arrays cannot be exported directly)
-HARMLESS_SERIAL=$(printf '%s\n' "${KNOWN_HARMLESS_ERRORS[@]}")
-ERROR_CODES_SERIAL=$(printf '%s\n' "${KNOWN_ERROR_CODES[@]}")
+# Re-export after config (config may have overridden values)
+export HWACC_DEV HWACC_TYPE PARALLEL CHECKSECONDS ACTION QUARANTINE_FOLDER
 
-export HWACC_DEV="${HWACC_DEV:-/dev/dri/renderD128}"
-export HWACC_TYPE="${HWACC_TYPE:-vaapi}"
-export PARALLEL="${PARALLEL:-4}"
-export CHECKSECONDS="${CHECKSECONDS:-60}"
-export HARMLESS_SERIAL
-export ERROR_CODES_SERIAL
-
-# ACTION on error:
-#   none    — just log it (default)
-#   remux   — attempt to fix by remuxing into a new file (safe, non-destructive)
-#   delete  — permanently delete the file (destructive!)
-#   move    — move to QUARANTINE_FOLDER
-export ACTION="${ACTION:-none}"
-export QUARANTINE_FOLDER="${QUARANTINE_FOLDER:-$SCRIPT_DIR/quarantine_$DATESTAMP}"
-
-# Always determined by the script — never taken from the config file
 EXTENSIONS="${EXTENSIONS:-avi|mkv|mp4|ts|m4v}"
-PARENTFOLDER="$1"
-LOGFILE="$SCRIPT_DIR/logs_check_videofiles/${DATESTAMP}.log"
+PARENTFOLDER="${1:?Usage: $0 <folder>}"
+export LOGFILE="$SCRIPT_DIR/logs_check_videofiles/${DATESTAMP}.log"
 mkdir -p "$(dirname "$LOGFILE")"
 
 find "$PARENTFOLDER" -type f -regextype posix-extended -regex ".*\.(${EXTENSIONS})" -print0 \
-  | xargs -0 -P $PARALLEL -I{} bash -c \
-    'start=$(date +%s%3N); \
-    started_at=$(date +%H:%M:%S); \
-    err=$( \
-      ffmpeg -v error -hwaccel $HWACC_TYPE -hwaccel_device $HWACC_DEV -hwaccel_output_format $HWACC_TYPE -threads 1 -t $CHECKSECONDS -i "$1" -map 0:v -map 0:a -f null - 2>&1; \
-      ffmpeg -v error -hwaccel $HWACC_TYPE -hwaccel_device $HWACC_DEV -hwaccel_output_format $HWACC_TYPE -threads 1 -sseof -$CHECKSECONDS -i "$1" -map 0:v -map 0:a -f null - 2>&1 \
-    ); \
-    if [ -n "$err" ]; then \
-      decode_mode="SW"; \
-      sw_err=$( \
-        ffmpeg -v error -threads 1 -t $CHECKSECONDS -i "$1" -map 0:v -map 0:a -f null - 2>&1; \
-        ffmpeg -v error -threads 1 -sseof -$CHECKSECONDS -i "$1" -map 0:v -map 0:a -f null - 2>&1 \
-      ); \
-      err="$sw_err"; \
-    else \
-      decode_mode="HW"; \
-    fi; \
-    elapsed=$(( $(date +%s%3N) - start )); \
-    harmless_grep=$(printf "%s\n" "$HARMLESS_SERIAL" | cut -d"|" -f1 | paste -sd"|"); \
-    if [ -n "$harmless_grep" ]; then \
-      real_err=$(printf "%s\n" "$err" | grep -ivE "$harmless_grep"); \
-    else \
-      real_err="$err"; \
-    fi; \
-    if [ -n "$real_err" ]; then \
-      status="ERROR"; \
-      codes=""; \
-      while IFS="|" read -r pat code; do \
-        [ -z "$pat" ] && continue; \
-        if printf "%s\n" "$real_err" | grep -qiE "$pat"; then \
-          printf "%s\n" "$codes" | grep -qF "$code" || codes="${codes:+$codes,}$code"; \
-        fi; \
-      done <<< "$ERROR_CODES_SERIAL"; \
-      [ -z "$codes" ] && codes="UNKNOWN"; \
-    elif [ -n "$err" ]; then \
-      status="WARN "; \
-      codes=""; \
-      while IFS="|" read -r pat code; do \
-        [ -z "$pat" ] && continue; \
-        if printf "%s\n" "$err" | grep -qiE "$pat"; then \
-          printf "%s\n" "$codes" | grep -qF "$code" || codes="${codes:+$codes,}$code"; \
-        fi; \
-      done <<< "$HARMLESS_SERIAL"; \
-      [ -z "$codes" ] && codes="HARMLESS"; \
-    else \
-      status="OK   "; \
-      codes=""; \
-    fi; \
-    if [ -n "$codes" ]; then \
-      printf "%s [%s] [%s +%ds %03dms] [%s] %s\n" "$status" "$decode_mode" "$started_at" $((elapsed/1000)) $((elapsed%1000)) "$codes" "$1"; \
-    else \
-      printf "%s [%s] [%s +%ds %03dms] %s\n" "$status" "$decode_mode" "$started_at" $((elapsed/1000)) $((elapsed%1000)) "$1"; \
-    fi; \
-    if [ "$codes" = "UNKNOWN" ]; then \
-      printf "%s\n" "$real_err" | sed "s/^/  ↳ /" ; \
-    fi; \
-    if [ "$status" = "ERROR" ]; then \
-      case "$ACTION" in \
-        remux) \
-          ext="${1##*.}"; \
-          base=$(basename "$1" ".$ext"); \
-          dir=$(dirname "$1"); \
-          base_clean="${base%%_fixed*}"; \
-          fixed="${dir}/${base_clean}_fixed.${ext}"; \
-          if ffmpeg -y -v error -i "$1" -map 0 -c copy "$fixed" 2>/dev/null; then \
-            printf "  ↳ REMUXED  OK : %s\n" "$fixed"; \
-          else \
-            printf "  ↳ REMUX FAILED: %s\n" "$1"; \
-            rm -f "$fixed"; \
-          fi \
-          ;; \
-        delete) \
-          rm -f "$1" \
-            && printf "  ↳ DELETED      : %s\n" "$1" \
-            || printf "  ↳ DELETE FAILED: %s\n" "$1" \
-          ;; \
-        move) \
-          mkdir -p "$QUARANTINE_FOLDER"; \
-          mv "$1" "$QUARANTINE_FOLDER/" \
-            && printf "  ↳ MOVED TO    : %s\n" "$QUARANTINE_FOLDER" \
-            || printf "  ↳ MOVE FAILED : %s\n" "$1" \
-          ;; \
-        *) ;; \
-      esac; \
-    fi' _ {} \
-  | tee -a "$LOGFILE"
+  | xargs -0 -P "$PARALLEL" -I{} bash -c '
+    f="$1"
+    start=$(date +%s%3N)
+    ts=$(date +%H:%M:%S)
+    tmplog=$(mktemp)
+    has_error=0
+
+    # Stage 1: container probe (fast — no decode)
+    out=$(ffprobe -v error -show_format -show_streams -i "$f" 2>&1 >/dev/null)
+    if [ -n "$out" ]; then
+      has_error=1
+      { printf "[PROBE]\n"; printf "%s\n" "$out"; } | sed "s/^/  | /" >> "$tmplog"
+    fi
+
+    # Stage 2: structural remux-to-null (fast — no decode)
+    if [ $has_error -eq 0 ]; then
+      out=$(ffmpeg -v error -i "$f" -map 0 -map_metadata -1 -c copy -f null - 2>&1)
+      if [ -n "$out" ]; then
+        has_error=1
+        { printf "[STRUCT]\n"; printf "%s\n" "$out"; } | sed "s/^/  | /" >> "$tmplog"
+      fi
+    fi
+
+    # Stage 3: HW-accelerated decode of first + last N seconds
+    if [ $has_error -eq 0 ]; then
+      out=$(
+        ffmpeg -v error \
+          -hwaccel "$HWACC_TYPE" -hwaccel_device "$HWACC_DEV" -hwaccel_output_format "$HWACC_TYPE" \
+          -threads 1 -t "$CHECKSECONDS" -i "$f" -map 0:v? -map 0:a? -f null - 2>&1
+        ffmpeg -v error \
+          -hwaccel "$HWACC_TYPE" -hwaccel_device "$HWACC_DEV" -hwaccel_output_format "$HWACC_TYPE" \
+          -threads 1 -sseof "-$CHECKSECONDS" -i "$f" -map 0:v? -map 0:a? -f null - 2>&1
+      )
+      if [ -n "$out" ]; then
+        has_error=1
+        { printf "[DECODE]\n"; printf "%s\n" "$out"; } | sed "s/^/  | /" >> "$tmplog"
+      fi
+    fi
+
+    elapsed=$(( $(date +%s%3N) - start ))
+    [ $has_error -eq 1 ] && status="ERROR" || status="OK   "
+    summary="${status} [${ts} +$((elapsed/1000))s $((elapsed%1000))ms] ${f}"
+
+    # Terminal: one line only
+    echo "$summary"
+
+    # Log: summary + full detail — flock prevents parallel processes from interleaving
+    (
+      flock 9
+      echo "$summary" >&9
+      [ -s "$tmplog" ] && cat "$tmplog" >&9
+    ) 9>>"$LOGFILE"
+    rm -f "$tmplog"
+
+    # Optional action on error
+    if [ $has_error -eq 1 ] && [ "$ACTION" != "none" ]; then
+      ext="${f##*.}"; base=$(basename "$f" ".$ext"); dir=$(dirname "$f")
+      base_clean="${base%%_fixed*}"
+      case "$ACTION" in
+        remux)
+          fixed="${dir}/${base_clean}_fixed.${ext}"
+          if ffmpeg -y -v error -i "$f" -map 0 -c copy "$fixed" 2>/dev/null; then
+            msg="  ↳ REMUXED  OK : $fixed"
+          else
+            rm -f "$fixed"; msg="  ↳ REMUX FAILED: $f"
+          fi ;;
+        delete)
+          rm -f "$f" \
+            && msg="  ↳ DELETED      : $f" \
+            || msg="  ↳ DELETE FAILED: $f" ;;
+        move)
+          mkdir -p "$QUARANTINE_FOLDER"
+          mv "$f" "$QUARANTINE_FOLDER/" \
+            && msg="  ↳ MOVED TO     : $QUARANTINE_FOLDER" \
+            || msg="  ↳ MOVE FAILED  : $f" ;;
+      esac
+      echo "$msg"
+      (flock 9; echo "$msg" >&9) 9>>"$LOGFILE"
+    fi
+  ' _ {}
 
 echo "Log saved to: $LOGFILE"
