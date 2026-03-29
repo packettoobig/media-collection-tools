@@ -54,7 +54,7 @@ find "$PARENTFOLDER" -type f -regextype posix-extended -regex ".*\.(${EXTENSIONS
     has_error=0
 
     # ── Stage 1: container probe (no decode) ──────────────────────────────────
-    out=$(ffprobe -v error -show_format -show_streams -nostdin -i "$f" 2>&1 >/dev/null)
+    out=$(ffprobe -v error -show_format -show_streams -i "$f" 2>&1 >/dev/null)
     if [ -n "$out" ]; then
       has_error=1
       { printf "[PROBE]\n"; printf "%s\n" "$out"; } | sed "s/^/  | /" >> "$tmplog"
